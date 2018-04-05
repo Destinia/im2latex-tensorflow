@@ -1,40 +1,67 @@
 import tensorflow as tf
 import time
 import threading
+import os
 import numpy as np
 import re
 import glob
 from PIL import Image
 
-def data_iterator(set='train',batch_size = 32):
+
+def get_vocab(vocab_file='xml_vocab.txt'):
+    vocab = dict()
+    vocab['<PAD>'] = 0
+    vocab['<BOS>'] = 1
+    vocab['<EOS>'] = 2
+    vocab['<UNK>'] = 3
+
+    with open(os.path.join('data', vocab_file)) as f:
+        for index, line in enumerate(f.readlines()):
+            vocab[line.strip()] = index + 4
+    return vocab
+
+
+def get_rev_vocab(vocab_file='xml_vocab.txt'):
+    vocab = list()
+    vocab.extend(['<PAD>', '<BOS>', '<EOS>', '<UNK>'])
+    with open(os.path.join('data', vocab_file)) as f:
+        for index, line in enumerate(f.readlines()):
+            vocab.append(line.strip())
+    return vocab
+
+def data_iterator(dataset='train',batch_size = 32):
     '''
     Python data generator to facilitate mini-batch training
     Arguments:
-        set - 'train','valid','test' sets
+        dataset - 'train','valid','test' datasets
         batch_size - integer (Usually 32,64,128, etc.)
     '''
-    train_dict = np.load(set+'_buckets.npy').tolist()
-    print "Length of %s data: "%set,np.sum([len(train_dict[x]) for x in train_dict.keys()])
+    vocab = get_vocab()
+    data = [line.strip().split()for line in open(
+        os.path.join('data', dataset + '.lst')).readlines()]
+    labels = [f.strip().split()
+            for f in open(os.path.join('data', 'XMLsequence.lst')).readlines()]
+    print("Length of %s data: " % dataset, len(data))
+    N_FILES = (len(data) // batch_size) * batch_size
 
-    for keys in train_dict.keys():
-        train_list = train_dict[keys]
-        N_FILES = (len(train_list)//batch_size)*batch_size
-        for batch_idx in xrange(0,N_FILES,batch_size):
-            train_sublist = train_list[batch_idx:batch_idx+batch_size]
-            imgs = []
-            batch_forms = []
-            for x,y in train_sublist:
-                imgs.append(np.asarray(Image.open('./images_processed/'+x).convert('YCbCr'))[:,:,0][:,:,None])
-                batch_forms.append(y)
-            imgs = np.asarray(imgs,dtype=np.float32).transpose(0,3,1,2)
-            lens = [len(x) for x in batch_forms]
+    for batch_idx in range(0,N_FILES,batch_size):
+        train_sublist = data[batch_idx:batch_idx+batch_size]
+        imgs = []
+        batch_forms = []
+        for img_path, img_id in train_sublist:
+            imgs.append(np.asarray(Image.open(os.path.join('data', 'processedImage', img_path)).convert('YCbCr'))[:,:,0][:,:,None])
+            batch_forms.append([vocab['<BOS>']] +
+                [vocab[token] if token in vocab else vocab['<UNK>']for token in labels[int(img_id)]]
+                +[vocab['<EOS>']])
+        imgs = np.asarray(imgs,dtype=np.float32).transpose(0,3,1,2)
+        lens = [len(x) for x in batch_forms]
 
-            mask = np.zeros((batch_size,max(lens)),dtype=np.int32)
-            Y = np.zeros((batch_size,max(lens)),dtype=np.int32)
-            for i,form in enumerate(batch_forms):
-                mask[i,:len(form)] = 1
-                Y[i,:len(form)] = form
-            yield imgs, Y, mask
+        mask = np.zeros((batch_size,max(lens)),dtype=np.int32)
+        Y = np.zeros((batch_size,max(lens)),dtype=np.int32)
+        for i,form in enumerate(batch_forms):
+            mask[i,:len(form)] = 1
+            Y[i,:len(form)] = form
+        yield imgs, Y, mask
 
 ## Deprecated!! Queue Runners cannot be used as image is of variable size
 class CustomRunner(object):
